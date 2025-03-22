@@ -1,0 +1,78 @@
+name: Firmware Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+# Add permissions block
+permissions:
+  contents: write
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v35
+        with:
+          files: "*.bin"
+
+      - name: Find new firmware files
+        id: find-firmware
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Only process non-dev firmware files
+            if [[ "$file" == Bloom-Control*.bin && "$file" != *dev* ]]; then
+              echo "Found new firmware file: $file"
+              echo "firmware_file=$file" >> $GITHUB_OUTPUT
+              
+              # Extract version with dashes
+              version=$(echo $file | grep -oP '(?<=_)\d+-\d+-\d+(?=\.bin)')
+              # Convert dashes to dots for tag
+              tag_version=$(echo $version | tr '-' '.')
+              echo "tag_version=$tag_version" >> $GITHUB_OUTPUT
+              
+              # Get MD5 file
+              md5_file="${file%.bin}.md5"
+              if [ -f "$md5_file" ]; then
+                echo "md5_file=$md5_file" >> $GITHUB_OUTPUT
+              else
+                echo "MD5 file not found for $file"
+                exit 1
+              fi
+              
+              # Only process one firmware file per run
+              break
+            fi
+          done
+      
+      - name: Create Release
+        if: steps.find-firmware.outputs.firmware_file != ''
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.find-firmware.outputs.tag_version }}
+          name: Release v${{ steps.find-firmware.outputs.tag_version }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.find-firmware.outputs.firmware_file }}
+            ${{ steps.find-firmware.outputs.md5_file }}
+          body: |
+            Bloom Control Firmware v${{ steps.find-firmware.outputs.tag_version }}
+            
+            Release contains:
+            - Firmware binary
+            - MD5 checksum
+            
+            MD5: `cat ${{ steps.find-firmware.outputs.md5_file }}`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
